@@ -24,6 +24,8 @@ type ProtoFile struct {
 	messageDesc protoreflect.MessageDescriptor
 	// Object pool to reuse dynamicpb.Message instances and reduce memory allocations
 	messagePool sync.Pool
+	// Byte buffer pool to reuse byte slices for marshal output
+	bufferPool sync.Pool
 }
 
 func (p *Protobuf) Load(protoFilePath, lookupType string) ProtoFile {
@@ -51,13 +53,27 @@ func (p *Protobuf) Load(protoFilePath, lookupType string) ProtoFile {
 				return dynamicpb.NewMessage(messageDesc)
 			},
 		},
+		bufferPool: sync.Pool{
+			New: func() interface{} {
+				// Pre-allocate 1KB buffer (typical message size)
+				b := make([]byte, 0, 1024)
+				return &b
+			},
+		},
 	}
 }
 
 func (p *ProtoFile) Encode(data string) []byte {
-	// Get message from pool - Unmarshal will overwrite all fields
+	// Get message from pool
 	dynamicMessage := p.messagePool.Get().(*dynamicpb.Message)
-	defer p.messagePool.Put(dynamicMessage)
+	defer func() {
+		// Reset message to clear all fields before returning to pool
+		dynamicMessage.ProtoReflect().Range(func(fd protoreflect.FieldDescriptor, _ protoreflect.Value) bool {
+			dynamicMessage.ProtoReflect().Clear(fd)
+			return true
+		})
+		p.messagePool.Put(dynamicMessage)
+	}()
 
 	err := protojson.Unmarshal([]byte(data), dynamicMessage)
 
@@ -65,18 +81,37 @@ func (p *ProtoFile) Encode(data string) []byte {
 		log.Fatal(err)
 	}
 
-	encodedBytes, err := proto.Marshal(dynamicMessage)
+	// Get buffer from pool and use MarshalAppend to reuse buffer
+	bufPtr := p.bufferPool.Get().(*[]byte)
+	buf := (*bufPtr)[:0] // Reset length but keep capacity
+	
+	encodedBytes, err := proto.MarshalOptions{}.MarshalAppend(buf, dynamicMessage)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	return encodedBytes
+	// Make a copy to return (caller owns this)
+	result := make([]byte, len(encodedBytes))
+	copy(result, encodedBytes)
+	
+	// Return buffer to pool
+	*bufPtr = buf
+	p.bufferPool.Put(bufPtr)
+
+	return result
 }
 
 func (p *ProtoFile) Decode(decodedBytes []byte) string {
-	// Get message from pool - Unmarshal will overwrite all fields
+	// Get message from pool
 	decodedMessage := p.messagePool.Get().(*dynamicpb.Message)
-	defer p.messagePool.Put(decodedMessage)
+	defer func() {
+		// Reset message to clear all fields before returning to pool
+		decodedMessage.ProtoReflect().Range(func(fd protoreflect.FieldDescriptor, _ protoreflect.Value) bool {
+			decodedMessage.ProtoReflect().Clear(fd)
+			return true
+		})
+		p.messagePool.Put(decodedMessage)
+	}()
 
 	err := proto.Unmarshal(decodedBytes, decodedMessage)
 	if err != nil {
