@@ -1,4 +1,4 @@
-module github.com/traveltime-dev/xk6-protobuf
+module github.com/kbfu/xk6-protobuf
 
 go 1.21
 
