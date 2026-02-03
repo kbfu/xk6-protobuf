@@ -1,13 +1,13 @@
 module github.com/kbfu/xk6-protobuf
 
-go 1.21
+go 1.23
 
 toolchain go1.23.0
 
 require (
 	github.com/bufbuild/protocompile v0.14.1
 	go.k6.io/k6 v0.45.1
-	google.golang.org/protobuf v1.34.2
+	google.golang.org/protobuf v1.36.11
 )
 
 require (
