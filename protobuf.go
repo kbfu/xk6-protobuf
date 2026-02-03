@@ -3,6 +3,7 @@ package protobuf
 import (
 	"context"
 	"log"
+	"sync"
 
 	"github.com/bufbuild/protocompile"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -21,6 +22,8 @@ type Protobuf struct{}
 
 type ProtoFile struct {
 	messageDesc protoreflect.MessageDescriptor
+	// Object pool to reuse dynamicpb.Message instances and reduce memory allocations
+	messagePool sync.Pool
 }
 
 func (p *Protobuf) Load(protoFilePath, lookupType string) ProtoFile {
@@ -39,11 +42,30 @@ func (p *Protobuf) Load(protoFilePath, lookupType string) ProtoFile {
 		log.Fatal("Zero files were parsed")
 	}
 
-	return ProtoFile{files[0].Messages().ByName(protoreflect.Name(lookupType))}
+	messageDesc := files[0].Messages().ByName(protoreflect.Name(lookupType))
+
+	return ProtoFile{
+		messageDesc: messageDesc,
+		messagePool: sync.Pool{
+			New: func() interface{} {
+				return dynamicpb.NewMessage(messageDesc)
+			},
+		},
+	}
 }
 
 func (p *ProtoFile) Encode(data string) []byte {
-	dynamicMessage := dynamicpb.NewMessage(p.messageDesc)
+	// Get message from pool instead of creating new one every time
+	dynamicMessage := p.messagePool.Get().(*dynamicpb.Message)
+	defer func() {
+		// Clear all fields and return to pool for reuse
+		protoReflect := dynamicMessage.ProtoReflect()
+		protoReflect.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+			protoReflect.Clear(fd)
+			return true
+		})
+		p.messagePool.Put(dynamicMessage)
+	}()
 
 	err := protojson.Unmarshal([]byte(data), dynamicMessage)
 
@@ -60,8 +82,17 @@ func (p *ProtoFile) Encode(data string) []byte {
 }
 
 func (p *ProtoFile) Decode(decodedBytes []byte) string {
-
-	decodedMessage := dynamicpb.NewMessage(p.messageDesc)
+	// Get message from pool instead of creating new one every time
+	decodedMessage := p.messagePool.Get().(*dynamicpb.Message)
+	defer func() {
+		// Clear all fields and return to pool for reuse
+		protoReflect := decodedMessage.ProtoReflect()
+		protoReflect.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+			protoReflect.Clear(fd)
+			return true
+		})
+		p.messagePool.Put(decodedMessage)
+	}()
 
 	err := proto.Unmarshal(decodedBytes, decodedMessage)
 	if err != nil {
