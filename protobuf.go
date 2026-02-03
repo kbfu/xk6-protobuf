@@ -68,10 +68,7 @@ func (p *ProtoFile) Encode(data string) []byte {
 	dynamicMessage := p.messagePool.Get().(*dynamicpb.Message)
 	defer func() {
 		// Reset message to clear all fields before returning to pool
-		dynamicMessage.ProtoReflect().Range(func(fd protoreflect.FieldDescriptor, _ protoreflect.Value) bool {
-			dynamicMessage.ProtoReflect().Clear(fd)
-			return true
-		})
+		proto.Reset(dynamicMessage)
 		p.messagePool.Put(dynamicMessage)
 	}()
 
@@ -90,13 +87,17 @@ func (p *ProtoFile) Encode(data string) []byte {
 		log.Fatal(err)
 	}
 
-	// Make a copy to return (caller owns this)
+	// Make a copy to return
 	result := make([]byte, len(encodedBytes))
 	copy(result, encodedBytes)
 	
-	// Return buffer to pool
-	*bufPtr = buf
-	p.bufferPool.Put(bufPtr)
+	// Return buffer to pool only if it's not too large (prevent memory bloat)
+	const maxBufferSize = 4096 // 4KB max
+	if cap(encodedBytes) <= maxBufferSize {
+		*bufPtr = encodedBytes[:0]
+		p.bufferPool.Put(bufPtr)
+	}
+	// If buffer grew too large, let it be GC'd and pool will create a new one
 
 	return result
 }
@@ -106,10 +107,7 @@ func (p *ProtoFile) Decode(decodedBytes []byte) string {
 	decodedMessage := p.messagePool.Get().(*dynamicpb.Message)
 	defer func() {
 		// Reset message to clear all fields before returning to pool
-		decodedMessage.ProtoReflect().Range(func(fd protoreflect.FieldDescriptor, _ protoreflect.Value) bool {
-			decodedMessage.ProtoReflect().Clear(fd)
-			return true
-		})
+		proto.Reset(decodedMessage)
 		p.messagePool.Put(decodedMessage)
 	}()
 
