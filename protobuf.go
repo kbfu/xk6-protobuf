@@ -55,17 +55,9 @@ func (p *Protobuf) Load(protoFilePath, lookupType string) ProtoFile {
 }
 
 func (p *ProtoFile) Encode(data string) []byte {
-	// Get message from pool instead of creating new one every time
+	// Get message from pool - Unmarshal will overwrite all fields
 	dynamicMessage := p.messagePool.Get().(*dynamicpb.Message)
-	defer func() {
-		// Clear all fields and return to pool for reuse
-		protoReflect := dynamicMessage.ProtoReflect()
-		protoReflect.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
-			protoReflect.Clear(fd)
-			return true
-		})
-		p.messagePool.Put(dynamicMessage)
-	}()
+	defer p.messagePool.Put(dynamicMessage)
 
 	err := protojson.Unmarshal([]byte(data), dynamicMessage)
 
@@ -82,17 +74,9 @@ func (p *ProtoFile) Encode(data string) []byte {
 }
 
 func (p *ProtoFile) Decode(decodedBytes []byte) string {
-	// Get message from pool instead of creating new one every time
+	// Get message from pool - Unmarshal will overwrite all fields
 	decodedMessage := p.messagePool.Get().(*dynamicpb.Message)
-	defer func() {
-		// Clear all fields and return to pool for reuse
-		protoReflect := decodedMessage.ProtoReflect()
-		protoReflect.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
-			protoReflect.Clear(fd)
-			return true
-		})
-		p.messagePool.Put(decodedMessage)
-	}()
+	defer p.messagePool.Put(decodedMessage)
 
 	err := proto.Unmarshal(decodedBytes, decodedMessage)
 	if err != nil {
